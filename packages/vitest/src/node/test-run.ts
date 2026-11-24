@@ -195,7 +195,7 @@ export class TestRun {
     // Keep the lookup local to this update so a rerun sees edits to external maps.
     let cachedProject: TestProject | undefined
     let sourceMaps: Map<string, unknown>
-    function getSourceMap(project: TestProject, file: string) {
+    const getSourceMap = (project: TestProject, file: string) => {
       // A custom frame filter can change the files read by the next lookup.
       if (typeof project.config.onStackTrace === 'function') {
         cachedProject = undefined
