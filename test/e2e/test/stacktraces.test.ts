@@ -77,6 +77,46 @@ describe('stacktrace filtering', async () => {
   })
 })
 
+it('maps retry errors separately and picks up a new external source map on rerun', async () => {
+  const map = (source: string) =>
+    JSON.stringify({ version: 3, sources: [source], names: [], mappings: 'AAAA;AACA' })
+  const mapPath = 'node_modules/retry-dep/index.cjs.map'
+  const run = await runInlineTests({
+    'node_modules/retry-dep/package.json': JSON.stringify({ main: 'index.cjs' }),
+    'node_modules/retry-dep/index.cjs': [
+      "exports.first = () => { throw new Error('first') }",
+      "exports.second = () => { throw new Error('second') }",
+      '//# sourceMappingURL=index.cjs.map',
+    ].join('\n'),
+    [mapPath]: map('original.ts'),
+    'retry.test.js': `
+      import { test } from 'vitest'
+      import dep from 'retry-dep'
+      let calls = 0
+      test('flaky', { retry: 2 }, () => {
+        if (++calls === 1) dep.first()
+        if (calls === 2) dep.second()
+      })
+    `,
+  })
+  const { ctx, fs, stderr } = run
+  expect(stderr).toBe('')
+  const expectAttempts = (source: string) => {
+    const [test] = run.results[0].children.allTests()
+    const [first, second, last] = test.attempts()
+    const file = fs.resolveFile(`node_modules/retry-dep/${source}`)
+    expect(first.errors?.[0]).toMatchObject({ message: 'first' })
+    expect(first.errors?.[0].stacks?.[0]).toMatchObject({ file, line: 1, column: 1 })
+    expect(second.errors?.[0]).toMatchObject({ message: 'second' })
+    expect(second.errors?.[0].stacks?.[0]).toMatchObject({ file, line: 2, column: 1 })
+    expect(last.state).toBe('passed')
+  }
+  expectAttempts('original.ts')
+  fs.editFile(mapPath, () => map('updated.ts'))
+  await ctx!.runTestSpecifications(await ctx!.globTestSpecifications())
+  expectAttempts('updated.ts')
+})
+
 describe('stacktrace in dependency package', () => {
   const root = resolve(import.meta.dirname, '../fixtures/stacktraces')
   const testFile = resolve(root, './error-in-package.test.js')
