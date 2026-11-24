@@ -191,6 +191,26 @@ export class TestRun {
 
   // make sure the error always has a "stacks" property
   private syncUpdateStacks(update: TaskResultPack[]): void {
+    // A worker can send several retry errors with frames from the same files.
+    // Keep the lookup local to this update so a rerun sees edits to external maps.
+    let cachedProject: TestProject | undefined
+    let sourceMaps: Map<string, unknown>
+    function getSourceMap(project: TestProject, file: string) {
+      // A custom frame filter can change the files read by the next lookup.
+      if (typeof project.config.onStackTrace === 'function') {
+        cachedProject = undefined
+        return getExternalSourceMap(project, file)
+      }
+      if (cachedProject !== project) {
+        cachedProject = project
+        sourceMaps = new Map()
+      }
+      if (!sourceMaps.has(file)) {
+        sourceMaps.set(file, getExternalSourceMap(project, file))
+      }
+      return sourceMaps.get(file)
+    }
+
     update.forEach(([taskId, result]) => {
       const task = this.vitest.state.idMap.get(taskId)
       const isBrowser = task && task.file.pool === 'browser'
@@ -209,7 +229,7 @@ export class TestRun {
         } else {
           error.stacks = parseErrorStacktrace(error, {
             frameFilter: project.config.onStackTrace,
-            getSourceMap: (file) => getExternalSourceMap(project, file),
+            getSourceMap: (file) => getSourceMap(project, file),
           })
         }
       })
